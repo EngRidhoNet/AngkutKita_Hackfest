@@ -2,25 +2,26 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
-
-	"github.com/gorilla/mux"
+	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 	"AngkutKita/RegisterLogin/models"
 	"AngkutKita/RegisterLogin/utils"
 )
 
-func RegisterHandler(db *gorm.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func RegisterHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		var newUser models.User
-		_ = json.NewDecoder(r.Body).Decode(&newUser)
+		if err := c.BindJSON(&newUser); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+			return
+		}
 
 		// Hash password before storing it
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newUser.Password), bcrypt.DefaultCost)
 		if err != nil {
-			http.Error(w, "Error hashing password", http.StatusInternalServerError)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error hashing password"})
 			return
 		}
 		newUser.Password = string(hashedPassword)
@@ -28,33 +29,37 @@ func RegisterHandler(db *gorm.DB) http.HandlerFunc {
 		db.Create(&newUser)
 		token, err := utils.GenerateToken(newUser.Username)
 		if err != nil {
-			http.Error(w, "Error generating token", http.StatusInternalServerError)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating token"})
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"token": token})
+
+		c.JSON(http.StatusOK, gin.H{"token": token})
 	}
 }
 
-func LoginHandler(db *gorm.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		params := mux.Vars(r)
-		var user models.User
-		db.First(&user, "username = ?", params["username"])
+func LoginHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		username := c.Param("username")
+		password := c.Param("password")
 
-		err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(params["password"]))
+		var user models.User
+		if err := db.First(&user, "username = ?", username).Error; err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+			return
+		}
+
+		err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
 		if err != nil {
-			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 			return
 		}
 
 		token, err := utils.GenerateToken(user.Username)
 		if err != nil {
-			http.Error(w, "Error generating token", http.StatusInternalServerError)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating token"})
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"token": token})
+		c.JSON(http.StatusOK, gin.H{"token": token})
 	}
 }
